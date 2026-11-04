@@ -43,14 +43,17 @@ return agent.session.requestHeader()?.config.maxTokens ?? defaultMaxTokens ?? 0;
 
 The request envelope's own `maxTokens` wins. Fallback is the adapter's per-request `defaultMaxTokens` (`NM/dsh-llm/lib/types/types.d.ts:398`: "Adapter-configured per-request output cap materialized when callers omit one"), which the adapter materializes into the envelope. No declared cap means no reservation (`0`). `contextWindow` comes from the model declaration (`NM/dsh-llm/lib/types/types.d.ts:314,336`); session header type at `NM/dsh-session/lib/types/types.d.ts:218`.
 
-## 5. Minimal profile patch to swap the backend
+## 5. How this plugin is mounted (not a host-plane swap)
 
-Do not edit host compositions. Profile patch only: `~/.dsh/profiles/web/cordis.patch.yml` (currently no compaction rows). The base row to target is `- id: compaction-basic / name: '@deepseek-ai/dsh-compaction-basic'` (`NM/dsh-base/cordis.patch.yml:351-352`). A patch row with the same `id` replaces the row's fields wholesale (never deep-merged), so restate `name` plus any `config` the new plugin needs:
+The host-plane `compaction-basic` row in `NM/dsh-base/cordis.patch.yml:351-352` is disabled by `dsh-web-app` (`NM/dsh-web-app/cordis.patch.yml:532-545`); agents run the preset-declared `compaction-basic` rows instead. Swapping or patching the host-plane row therefore does not affect the compaction instance agents actually use. A one-line row targeting that host-plane `id` is stale and is rejected with a "name mismatch" error.
 
-```yml
-- id: compaction-basic
-  name: '<specifier resolving to your plugin entry>'
-```
+The real mount is the bundle shipped by this package:
+
+- `package.json` declares `dsh.bundle.patch: ./cordis.patch.yml`;
+- that bundle patch carries four wholesale preset overrides — `preset-standard`, `preset-ptc`, `preset-minimal`, and `preset-cordis` — each pointing its preset `compaction-basic` entry at `@fares/dsh-compaction-plus`;
+- installation is via a link dependency plus a `bundles` profile entry, not by editing host compositions or the profile's host-plane rows.
+
+For the profile-side example rows, see [docs/EXAMPLE-PROFILE-PATCH.md](EXAMPLE-PROFILE-PATCH.md). For the shipped preset overrides themselves, see the bundle [cordis.patch.yml](../cordis.patch.yml).
 
 Token meter stays on the host plane: the web preset disables only `compaction-basic`, `command-compact`, `tool-result-pruner` (`NM/dsh-web-app/cordis.patch.yml:532-545`), and the comment there says the meter stays host-side by design.
 
