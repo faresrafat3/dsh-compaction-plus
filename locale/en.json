@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Compaction Plus",
+    "description": "Drop-in replacement for the basic compaction engine in every agent preset, with spill-to-disk overflow and per-model policies."
+  }
+}
