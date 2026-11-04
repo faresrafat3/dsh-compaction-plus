@@ -44,8 +44,14 @@ npm test          # rebuilds, then node --test tests/
 
 All fields are optional; see [docs/EXAMPLE-PROFILE-PATCH.md](docs/EXAMPLE-PROFILE-PATCH.md)
 for copy-paste profile rows. The spill directory defaults to
-`~/.dsh/compaction-spill` (override with `spillDir`, or the
-`DSH_COMPACT_PLUS_SPILL_DIR` environment variable).
+`~/.dsh/compaction-spill` (override with `spillDir`; a
+`DSH_COMPACT_PLUS_SPILL_DIR` environment variable takes precedence over the
+built-in default when `spillDir` is unset — so the effective directory
+depends on the host environment, not only on config). Spill files are
+`0600`, symlink targets are refused, and secret-looking values are redacted
+by default (`spillSecrets: false` disables redaction). `spillDir: null`
+disables spill entirely; prune markers then state honestly that the text
+was not spilled rather than implying a store copy exists.
 
 ## Design docs
 

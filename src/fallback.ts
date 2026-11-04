@@ -39,15 +39,19 @@ export function buildPruneOnlySummary(input: {
   readonly messages: readonly Message[];
   readonly agentId: string;
   readonly keepLastUserMessages: number;
-  readonly maxTokens: number;
+  readonly maxTokens?: number;
 }): FallbackSummaryResult {
   const userTexts = lastUserTexts(input.messages, Math.max(0, input.keepLastUserMessages), 2000);
+  // Quoted user text is untrusted data, not instructions: fence it as such so
+  // a later model does not mistake embedded directives for live commands.
   const text = [
     "Conversation compacted locally (summarizer unavailable; prune-only fallback).",
     `Spilled region text is in the local store under session ${input.agentId}.`,
+    "<untrusted-user-text>",
     ...(userTexts.length > 0
-      ? ["Recent user requests:", ...userTexts.map((t) => `- ${t}`)]
+      ? userTexts.map((t) => `- ${t}`)
       : ["(no user text in the compacted region)"]),
+    "</untrusted-user-text>",
   ].join("\n");
   const block: TextBlock[] = [{ type: "text", text }];
   return {

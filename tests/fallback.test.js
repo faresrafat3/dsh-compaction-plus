@@ -23,6 +23,17 @@ test("prune-only fallback is deterministic and honestly attributed", () => {
   assert.match(summary, /sess-9/);
   assert.match(summary, /first ask/);
   assert.match(summary, /second ask/);
+  // Quoted user text is fenced as untrusted data (prompt-injection guard).
+  assert.match(summary, /<untrusted-user-text>/);
+  assert.match(summary, /<\/untrusted-user-text>/);
+});
+
+test("fallback works without maxTokens (base schema rejects 0)", () => {
+  const messages = [user("u1", "only ask")];
+  const out = buildPruneOnlySummary({ messages, agentId: "s", keepLastUserMessages: 1 });
+  assert.equal(out.maxTokens, undefined);
+  const summary = out.summary.map((block) => block.text).join("\n");
+  assert.match(summary, /only ask/);
 });
 
 test("fallback honors the last-user-messages cap", () => {

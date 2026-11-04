@@ -31,9 +31,17 @@ Every call to `summarize()` runs:
    conversation target).
 3. **Spill** (`src/spill.ts`). Before any transform, the region's text is
    appended to a per-session JSONL store (`<spillDir>/<sessionId>.jsonl`,
-   sessionId sanitized). `SpillStore.search()` provides a keyword-overlap
+   sessionId sanitized). The single default directory is
+   `~/.dsh/compaction-spill`, overridable per-config via `spillDir` (which
+   wins) or globally via the `DSH_COMPACT_PLUS_SPILL_DIR` environment
+   variable, resolved at call time; `spillDir: null` shoot-off switches
+   spill off. Files are written `0600` inside a `0700` directory, symlink
+   targets are refused, and secret-looking values are redacted unless
+   `spillSecrets: false`. `SpillStore.search()` provides a keyword-overlap
    retrieval index over those lines. A per-file byte cap drops the oldest
-   lines first. Spill failures are logged and never fail compaction.
+   lines first. Spill failures are logged and never fail compaction, and
+   the stage-1 prune markers record the actual outcome (`spilled`,
+   `not-spilled`, or `failed`) instead of always claiming a store copy.
 4. **Image offload by reference** (`src/image.ts`). Image blocks in the
    summarizer input become short text handles naming the attachment; the
    original blocks are untouched in the live history.

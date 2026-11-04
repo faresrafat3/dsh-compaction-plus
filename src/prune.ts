@@ -13,12 +13,15 @@
  *    removed and `tool-call` blocks are never touched, so tool call/result
  *    pairing stays balanced by construction.
  *
- * The full original texts are spilled to the local store by the engine
- * (stage 3) before these transforms run; the truncation marker names the
- * store so nothing is silently lost.
+ * The engine spills the original texts to the local store (stage 3) before
+ * these transforms run and passes the resulting SpillStatus in, so truncation
+ * markers only claim a spill when one actually happened.
  */
 
 import type { ContentBlock, Message } from "@deepseek-ai/dsh-llm";
+
+/** Where the full text of truncated messages actually lives after pruning. */
+export type SpillStatus = "spilled" | "not-spilled" | "failed";
 
 export interface PruneOptions {
   /** Newest tool results kept verbatim; all older ones are truncated. */
@@ -27,6 +30,11 @@ export interface PruneOptions {
   toolResultChars: number;
   /** Whether reasoning blocks are dropped from the summarizer input. */
   stripReasoning: boolean;
+  /**
+   * Honest spill provenance for truncation markers. Defaults to
+   * "not-spilled" (marker never claims a copy exists when it doesn't).
+   */
+  spillStatus?: SpillStatus;
 }
 
 export const DEFAULT_PRUNE_OPTIONS: Readonly<PruneOptions> = Object.freeze({
@@ -35,19 +43,28 @@ export const DEFAULT_PRUNE_OPTIONS: Readonly<PruneOptions> = Object.freeze({
   stripReasoning: true,
 });
 
-const TRUNCATION_MARKER = (removed: number): string =>
-  `\n[…tool result truncated by compaction-plus: ${removed} chars removed; ` +
-  `full text spilled to the local store…]\n`;
+function makeMarker(removed: number, spillStatus: SpillStatus): string {
+  const tail =
+    spillStatus === "spilled"
+      ? "full text spilled to the local store"
+      : spillStatus === "failed"
+        ? "spill failed; full text not retained"
+        : "not spilled; full text not retained";
+  return `\n[…tool result truncated by compaction-plus: ${removed} chars removed; ${tail}…]\n`;
+}
+
+const TRUNCATION_MARKER = (removed: number): string => makeMarker(removed, "not-spilled");
 
 /**
  * Truncate one long text value to a head/middle/tail window inside
  * `budget` chars. Values already inside the budget are returned unchanged.
+ * The marker claims a spill only when `spillStatus` is "spilled".
  */
-export function truncateText(text: string, budget: number): string {
+export function truncateText(text: string, budget: number, spillStatus: SpillStatus = "not-spilled"): string {
   if (text.length <= budget) return text;
   const head = Math.floor(budget * 0.6);
   const tail = Math.max(0, budget - head);
-  return text.slice(0, head) + TRUNCATION_MARKER(text.length - head - tail) + text.slice(text.length - tail);
+  return text.slice(0, head) + makeMarker(text.length - head - tail, spillStatus) + text.slice(text.length - tail);
 }
 
 /** Index of the first tool message inside the verbatim tail, or the message count when none. */
@@ -66,9 +83,9 @@ function verbatimToolStart(messages: readonly Message[], keepLast: number): numb
  * Rewrite one tool message so each long text block is truncated. Returns the
  * same object reference when nothing needed changing.
  */
-function pruneToolMessage(message: Message, budget: number): Message {
+function pruneToolMessage(message: Message, budget: number, spillStatus: SpillStatus = "not-spilled"): Message {
   const blocks = message.content.map((block) =>
-    block.type === "text" ? { ...block, text: truncateText(block.text, budget) } : block,
+    block.type === "text" ? { ...block, text: truncateText(block.text, budget, spillStatus) } : block,
   );
   const changed = blocks.some((block, index) => block !== message.content[index]);
   return changed ? { ...message, content: blocks } : message;
@@ -95,7 +112,7 @@ export function pruneForSummarization(
             : current;
     }
     if (current.role === "tool" && index < tailStart) {
-      current = pruneToolMessage(current, options.toolResultChars);
+      current = pruneToolMessage(current, options.toolResultChars, options.spillStatus ?? "not-spilled");
     }
     return current;
   });

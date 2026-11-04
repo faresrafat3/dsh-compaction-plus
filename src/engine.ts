@@ -29,16 +29,15 @@ import { BasicCompactionEngine } from "@deepseek-ai/dsh-compaction-basic";
 import type { Agent } from "@deepseek-ai/dsh-agent";
 import type { ContentBlock, Message, TokenUsage, ToolSchema } from "@deepseek-ai/dsh-llm";
 import z from "@deepseek-ai/schemastery";
-import { homedir } from "node:os";
-import { join } from "node:path";
 
 import { buildPruneOnlySummary } from "./fallback.js";
 import { offloadImagesInContent } from "./image.js";
 import {
   collectSpillTexts,
   pruneForSummarization,
+  type SpillStatus,
 } from "./prune.js";
-import { SpillStore } from "./spill.js";
+import { SpillStore, defaultSpillDir } from "./spill.js";
 
 /** Structural mirror of the summarizer input type (the package root does not re-export it). */
 export interface SummarizationInput {
@@ -99,10 +98,12 @@ export interface CompactionPlusConfig {
   maxOverflowRetries?: number;
   modelPolicies?: ModelCompactPolicyConfig[];
   auto?: boolean;
-  /** Spill-store directory. Defaults to ~/.dsh/compaction-spill. */
-  spillDir?: string;
+  /** Spill-store directory. Defaults to ~/.dsh/compaction-spill (or env DSH_COMPACT_PLUS_SPILL_DIR). null disables spill. */
+  spillDir?: string | null;
   /** Per-session spill byte cap (oldest entries dropped first). Defaults to 4 MiB. */
   spillMaxBytes?: number;
+  /** Redact secret-looking values before writing spill files. Defaults to true. */
+  spillSecrets?: boolean;
   /** Newest tool results kept verbatim in the summarizer input. Defaults to 2. */
   keepLastToolResults?: number;
   /** Character budget for one truncated stale tool result. Defaults to 1200. */
@@ -116,10 +117,6 @@ export interface CompactionPlusConfig {
 }
 
 export const DEFAULT_SPILL_MAX_BYTES = 4 * 1024 * 1024;
-
-function defaultSpillDir(): string {
-  return join(homedir(), ".dsh", "compaction-spill");
-}
 
 const thresholdRatioSchema = z.number();
 const headroomTokensSchema = z.number().step(1).min(0);
@@ -160,8 +157,9 @@ export class CompactionPlusEngine extends BasicCompactionEngine {
     maxOverflowRetries: maxOverflowRetriesSchema,
     modelPolicies: z.array(modelPolicy),
     auto: z.boolean(),
-    spillDir: z.string(),
+    spillDir: z.union([z.string(), z.const(null)]),
     spillMaxBytes: z.number().step(1).min(1024),
+    spillSecrets: z.boolean(),
     keepLastToolResults: z.number().step(1).min(0),
     toolResultChars: z.number().step(1).min(256),
     stripReasoning: z.boolean(),
@@ -171,7 +169,8 @@ export class CompactionPlusEngine extends BasicCompactionEngine {
 
   // Public readonly fields (not #private): Cordis service access goes
   // through a Reflect proxy, and private fields fail through that receiver.
-  readonly spillStore: SpillStore;
+  readonly spillStore: SpillStore | null;
+  readonly spillSecrets: boolean;
   readonly keepLastToolResults: number;
   readonly toolResultChars: number;
   readonly stripReasoning: boolean;
@@ -184,6 +183,7 @@ export class CompactionPlusEngine extends BasicCompactionEngine {
     const {
       spillDir,
       spillMaxBytes,
+      spillSecrets,
       keepLastToolResults,
       toolResultChars,
       stripReasoning,
@@ -193,8 +193,10 @@ export class CompactionPlusEngine extends BasicCompactionEngine {
     } = config ?? {};
     super(context, baseConfig);
 
-    const resolvedSpillDir = spillDir ?? defaultSpillDir();
-    this.spillStore = new SpillStore(resolvedSpillDir, spillMaxBytes ?? DEFAULT_SPILL_MAX_BYTES);
+    this.spillSecrets = spillSecrets ?? true;
+    this.spillStore = spillDir === null
+      ? null
+      : new SpillStore(spillDir ?? defaultSpillDir(), spillMaxBytes ?? DEFAULT_SPILL_MAX_BYTES, this.spillSecrets);
     this.keepLastToolResults = keepLastToolResults ?? 2;
     this.toolResultChars = toolResultChars ?? 1200;
     this.stripReasoning = stripReasoning ?? true;
@@ -215,15 +217,21 @@ export class CompactionPlusEngine extends BasicCompactionEngine {
   ): Promise<SummaryResult> {
     // Stage 3 first: spill the original region text (a superset of what the
     // summarizer will see) so pristine text survives every later transform.
+    // The prune markers below must honestly reflect what actually happened:
+    // "spilled" only when a write succeeded, "failed" when it threw, and
+    // "not-spilled" when there was nothing to write or spill is disabled.
+    let spillStatus: SpillStatus = "not-spilled";
     try {
       const texts = collectSpillTexts(input.messages);
-      if (texts.length > 0) {
+      if (texts.length > 0 && this.spillStore) {
         this.spillStore.append(
           String(agent.id),
           texts.map((entry) => ({ ts: Date.now(), role: entry.role, text: entry.text })),
         );
+        spillStatus = "spilled";
       }
     } catch (error) {
+      spillStatus = "failed";
       console.warn("[dsh-compaction-plus] spill failed; compaction continues", error);
     }
 
@@ -234,6 +242,7 @@ export class CompactionPlusEngine extends BasicCompactionEngine {
       keepLastToolResults: this.keepLastToolResults,
       toolResultChars: this.toolResultChars,
       stripReasoning: this.stripReasoning,
+      spillStatus,
     });
     const processed = this.offloadImages
       ? pruned.map((message) => {
@@ -251,7 +260,7 @@ export class CompactionPlusEngine extends BasicCompactionEngine {
         messages: input.messages,
         agentId: String(agent.id),
         keepLastUserMessages: this.lastUserMessages,
-        maxTokens: this.config.maxTokens ?? 0,
+        maxTokens: this.config.maxTokens,
       });
     }
   }

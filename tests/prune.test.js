@@ -48,6 +48,7 @@ test("stale tool results are truncated with a marker naming the removed chars", 
     keepLastToolResults: 1,
     toolResultChars: 1000,
     stripReasoning: false,
+    spillStatus: "spilled",
   });
   assert.equal(out[2].content[0].text, "short");
   for (const stale of out.slice(0, 2)) {
@@ -57,6 +58,30 @@ test("stale tool results are truncated with a marker naming the removed chars", 
   }
   // non-tool messages are untouched in content
   assert.ok(out.every((m) => m.role === "tool"));
+});
+
+test("default spillStatus marks prune as not-spilled honestly", () => {
+  const messages = [tool("t1", big(5000)), tool("t2", big(5000))];
+  const out = pruneForSummarization(messages, {
+    keepLastToolResults: 0,
+    toolResultChars: 1000,
+    stripReasoning: false,
+  });
+  for (const stale of out) {
+    assert.match(stale.content[0].text, /not spilled; full text not retained/);
+    assert.ok(!stale.content[0].text.includes("full text spilled to the local store"));
+  }
+});
+
+test("failed spillStatus marks prune as spill-failed honestly", () => {
+  const messages = [tool("t1", big(5000))];
+  const out = pruneForSummarization(messages, {
+    keepLastToolResults: 0,
+    toolResultChars: 1000,
+    stripReasoning: false,
+    spillStatus: "failed",
+  });
+  assert.match(out[0].content[0].text, /spill failed; full text not retained/);
 });
 
 test("collectSpillTexts skips system-prompt messages and keeps order", () => {
