@@ -1,0 +1,36 @@
+{
+  "name": "@fares/dsh-compaction-plus",
+  "version": "0.0.1",
+  "private": true,
+  "description": "World-class context compaction plugin for DeepSeek Harness (DSH)",
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/types/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/types/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./src/*": "./src/*",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib/index.js",
+    "lib/types/**/*.d.ts"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "~4.0.5"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/faresrafat3/dsh-compaction-plus.git"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
