@@ -26,14 +26,11 @@
 
 import type { Context } from "@deepseek-ai/cordis";
 import { BasicCompactionEngine } from "@deepseek-ai/dsh-compaction-basic";
-import type { CompactionResult, CompactionTrigger } from "@deepseek-ai/dsh-compaction";
 import type { Agent } from "@deepseek-ai/dsh-agent";
 import type { ContentBlock, Message, TokenUsage, ToolSchema } from "@deepseek-ai/dsh-llm";
-import "@deepseek-ai/dsh-token-meter";
 import z from "@deepseek-ai/schemastery";
 
 import { buildPruneOnlySummary } from "./fallback.js";
-import { evaluatePressureGuard } from "./pressure.js";
 import { offloadImagesInContent } from "./image.js";
 import {
   collectSpillTexts,
@@ -205,32 +202,6 @@ export class CompactionPlusEngine extends BasicCompactionEngine {
     this.stripReasoning = stripReasoning ?? true;
     this.offloadImages = offloadImages ?? true;
     this.lastUserMessages = lastUserMessages ?? 3;
-  }
-
-  /**
-   * Pressure guard with a clamped output reservation.
-   *
-   * Delegates to the base engine for every non-pressure trigger and for any
-   * resolution/measurement failure; only skips compaction when the (clamped)
-   * threshold says the session is below pressure. The heavy lifting lives in
-   * `pressure.ts` so this method stays a thin, readable seam.
-   */
-  override async compactIfNeeded(
-    agent: Agent,
-    trigger: CompactionTrigger,
-    signal: AbortSignal,
-  ): Promise<CompactionResult | null> {
-    if (trigger !== "pressure") {
-      return super.compactIfNeeded(agent, trigger, signal);
-    }
-    const decision = await evaluatePressureGuard(
-      this.ctx as unknown as import("./pressure.js").PressureGuardContext,
-      agent as unknown as import("./pressure.js").PressureGuardAgent,
-      this.config as unknown as import("./pressure.js").PressureGuardConfig,
-      signal,
-    );
-    if (decision === "skip") return null;
-    return super.compactIfNeeded(agent, trigger, signal);
   }
 
   /**
