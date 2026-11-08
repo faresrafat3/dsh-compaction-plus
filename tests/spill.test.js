@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { appendFileSync, mkdtempSync, rmSync, statSync } from "node:fs";
+import { appendFileSync, mkdirSync, mkdtempSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -65,4 +65,23 @@ test("byte cap drops oldest entries and keeps the tail", (t) => {
   assert.ok(remaining.length < 20 && remaining.length > 0, `kept ${remaining.length} entries`);
   assert.equal(remaining[remaining.length - 1].ts, 20);
   assert.ok(statSync(join(dir, "s.jsonl")).size <= 512);
+});
+
+// ILL-06: the atomic tmp+rename rewrite fails with EISDIR when a directory
+// obstructs <session>.jsonl.tmp; the byte cap must still be enforced.
+test("byte cap is enforced even when the tmp rewrite is obstructed", (t) => {
+  const { store, dir } = freshStore(t, 300);
+  mkdirSync(join(dir, "s.jsonl.tmp")); // plant obstruction at the atomic-rewrite path
+  const entries = Array.from({ length: 20 }, (_, i) => ({
+    ts: i + 1,
+    role: "user",
+    text: `entry number ${i} ${"pad".repeat(3)}`,
+  }));
+  store.append("s", entries);
+  // RED on unpatched code: the EISDIR is swallowed and the file stays over cap.
+  const size = statSync(join(dir, "s.jsonl")).size;
+  assert.ok(size <= 300, `file is ${size} bytes, cap is 300`);
+  const remaining = store.read("s");
+  assert.ok(remaining.length > 0, `kept ${remaining.length} entries`);
+  assert.equal(remaining[remaining.length - 1].ts, 20);
 });

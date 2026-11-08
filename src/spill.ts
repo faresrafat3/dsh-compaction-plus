@@ -248,7 +248,16 @@ export class SpillStore {
       }
       writeFileSync(file, "", "utf8");
     } catch {
-      // Best effort; the next compaction will retry the cap.
+      // The atomic tmp rewrite can fail (e.g. a directory obstructs <file>.tmp);
+      // swallowed, that left the file over cap forever because every retry hit
+      // the same obstruction. Fall back to a direct write of the kept suffix so
+      // the cap is still enforced, dropping atomicity only on this path.
+      try {
+        const kept = entries.map((entry) => `${JSON.stringify(entry)}\n`).join("");
+        writeFileSync(file, kept, { encoding: "utf8", mode: 0o600 });
+      } catch {
+        // Best effort; the next compaction will retry the cap.
+      }
     }
     this.#indexes.delete(sessionId);
     this.#entries.delete(sessionId);
